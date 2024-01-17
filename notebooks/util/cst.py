@@ -11,9 +11,9 @@ from tensorflow.keras import layers
 from tensorflow.keras import callbacks
 from tensorflow.keras import datasets
 import tensorflow as tf
-import tensorflow_probability as tfp
+#import tensorflow_probability as tfp
 from tensorflow.keras import backend as k
-import tensorflow_lattice as tfl
+#import tensorflow_lattice as tfl
 
 figsize=(9,3)
 
