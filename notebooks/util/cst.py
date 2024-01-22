@@ -420,7 +420,7 @@ def print_crime_merics(model, tr, ts, attributes, target):
 
 
 # ==============================================================================
-# Data manipulation
+# Data inspection and manipulation
 # ==============================================================================
 
 def split_by_field(data, field):
@@ -446,6 +446,84 @@ def partition_by_machine(data, tr_machines):
     else:
         ts_data = pd.DataFrame(columns=tr_data.columns)
     return tr_data, ts_data
+
+
+def plot_dataframe(data, labels=None, vmin=-1.96, vmax=1.96,
+        figsize=None, s=4):
+    plt.figure(figsize=figsize)
+    plt.imshow(data.T.iloc[:, :], aspect='auto',
+            cmap='RdBu', vmin=vmin, vmax=vmax)
+    if labels is not None:
+        # nonzero = data.index[labels != 0]
+        ncol = len(data.columns)
+        lvl = - 0.05 * ncol
+        # plt.scatter(nonzero, lvl*np.ones(len(nonzero)),
+        #         s=s, color='tab:orange')
+        plt.scatter(labels.index, np.ones(len(labels)) * lvl,
+                s=s,
+                color=plt.get_cmap('tab10')(np.mod(labels, 10)))
+    plt.tight_layout()
+    
+    
+def plot_series(data, labels=None,
+                    windows=None,
+                    predictions=None,
+                    highlights=None,
+                    val_start=None,
+                    test_start=None,
+                    figsize=None,
+                    show_sampling_points=False,
+                    show_markers=False,
+                    filled_version=None):
+    # Open a new figure
+    plt.figure(figsize=figsize)
+    # Plot data
+    if not show_markers:
+        plt.plot(data.index, data.values, zorder=0)
+    else:
+        plt.plot(data.index, data.values, zorder=0,
+                marker='.', markersize=3)
+    if filled_version is not None:
+        filled = filled_version.copy()
+        filled[~data['value'].isnull()] = np.nan
+        plt.scatter(filled.index, filled,
+                marker='.', c='tab:orange', s=5);
+    if show_sampling_points:
+        vmin = data.min()
+        lvl = np.full(len(data.index), vmin)
+        plt.scatter(data.index, lvl, marker='.',
+                c='tab:red', s=5)
+    # Rotated x ticks
+    plt.xticks(rotation=45)
+    # Plot labels
+    if labels is not None:
+        plt.scatter(labels.values, data.loc[labels],
+                    color=anomaly_color, zorder=2, s=5)
+    # Plot windows
+    if windows is not None:
+        for _, wdw in windows.iterrows():
+            plt.axvspan(wdw['begin'], wdw['end'],
+                        color=anomaly_color, alpha=0.3, zorder=1)
+    # Plot training data
+    if val_start is not None:
+        plt.axvspan(data.index[0], val_start,
+                    color=training_color, alpha=0.1, zorder=-1)
+    if val_start is None and test_start is not None:
+        plt.axvspan(data.index[0], test_start,
+                    color=training_color, alpha=0.1, zorder=-1)
+    if val_start is not None:
+        plt.axvspan(val_start, test_start,
+                    color=validation_color, alpha=0.1, zorder=-1)
+    if test_start is not None:
+        plt.axvspan(test_start, data.index[-1],
+                    color=test_color, alpha=0.3, zorder=0)
+    # Predictions
+    if predictions is not None:
+        plt.scatter(predictions.values, data.loc[predictions],
+                    color=prediction_color, alpha=.4, zorder=3,
+                    s=5)
+    plt.grid(linestyle=':')
+    plt.tight_layout()
 
 
 # ==============================================================================
@@ -526,13 +604,14 @@ def opt_threshold_and_plot(machine, pred, th_range, cmodel,
 
 
 class CstBatchGenerator(tf.keras.utils.Sequence):
-    def __init__(self, data, in_cols, batch_size, seed=42):
+    def __init__(self, data, in_cols, batch_size, seed=42, validation_split=0.2):
         super(CstBatchGenerator).__init__()
         self.data = data
         self.in_cols = in_cols
         self.dpm = split_by_field(data, 'machine')
         self.rng = np.random.default_rng(seed)
         self.batch_size = batch_size
+        self.val_size = validation_split
         # Build the first sequence of batches
         self.__build_batches()
 
