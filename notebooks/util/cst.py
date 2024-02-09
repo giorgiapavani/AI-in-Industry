@@ -331,11 +331,12 @@ class MLPRegressor(keras.Model):
             x = layer(x)
         return x
 
+#this function generates a list of batches for the training set, where each batch is a sequence of sorted samples from the same machine 
 class CstBatchGenerator(tf.keras.utils.Sequence):
     def __init__(self, data, in_cols, batch_size, seed=42, validation_split=0.2):
         super(CstBatchGenerator).__init__()
         self.data = data
-        self.in_cols = in_cols
+        self.in_cols = in_cols #dt_in (p, s and rul)
         self.dpm = split_by_field(data, 'machine')
         self.rng = np.random.default_rng(seed)
         self.batch_size = batch_size
@@ -359,7 +360,7 @@ class CstBatchGenerator(tf.keras.utils.Sequence):
         # mcn = self.machines[index]
         x = self.data[self.in_cols].loc[idx].values
         y = self.data['rul'].loc[idx].values
-        flags = (y != -1)
+        flags = (y != -1) #check if we have unsupervised data
         info = np.vstack((y, flags, idx)).T
         return x, info
 
@@ -398,21 +399,24 @@ class CstBatchGenerator(tf.keras.utils.Sequence):
         self.batches = self.batches[bidx, :]
         self.machines = self.machines[bidx]
     
-    
+
+#this model extends an MLP regressor with a custom training step that includes a constraint regularization term in the loss function. 
+# It is designed to handle data with unsupervised portions (indicated by flags) and aims to enforce smooth predictions over consecutive indices. 
+# The alpha and beta parameters control the balance between the main loss and the constraint term during training.    
 class CstRULRegressor(MLPRegressor):
     def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
         super(CstRULRegressor, self).__init__(input_shape, hidden)
-        # Weights
+        # Weights - alpha and beta are coefficients controlling the balance between the main loss and the constraint regularization term
         self.alpha = alpha
         self.beta = beta
-        self.maxrul = maxrul
+        self.maxrul = maxrul # is a normalization factor used in the constraint term
         # Loss trackers
         self.ls_tracker = keras.metrics.Mean(name='loss')
         self.mse_tracker = keras.metrics.Mean(name='mse')
-        self.cst_tracker = keras.metrics.Mean(name='cst')
+        self.cst_tracker = keras.metrics.Mean(name='cst') #constraint term
 
     def train_step(self, data):
-        x, info = data
+        x, info = data #get_item from batch generator
         y_true = info[:, 0:1]
         flags = info[:, 1:2]
         idx = info[:, 2:3]
@@ -420,7 +424,7 @@ class CstRULRegressor(MLPRegressor):
         with tf.GradientTape() as tape:
             # Obtain the predictions
             y_pred = self(x, training=True)
-            # Compute the main loss
+            # Compute the main loss (0 for unsupervised data)
             mse = k.mean(flags * k.square(y_pred-y_true))
             # Compute the constraint regularization term
             delta_pred = y_pred[1:] - y_pred[:-1]
@@ -449,3 +453,62 @@ class CstRULRegressor(MLPRegressor):
         return [self.ls_tracker,
                 self.mse_tracker,
                 self.cst_tracker]
+        
+
+class CstPosRULRegressor(MLPRegressor):
+    def __init__(self, input_shape, alpha, beta, gamma, maxrul, hidden=[]):
+        super(CstPosRULRegressor, self).__init__(input_shape, hidden)
+        # Weights
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma  # New hyperparameter for the positivity regularizer
+        self.maxrul = maxrul
+        # Loss trackers
+        self.ls_tracker = keras.metrics.Mean(name='loss')
+        self.mse_tracker = keras.metrics.Mean(name='mse')
+        self.cst_tracker = keras.metrics.Mean(name='cst')
+
+    # ... (rest of the class definition remains the same)
+
+    def train_step(self, data):
+        x, info = data
+        y_true = info[:, 0:1]
+        flags = info[:, 1:2]
+        idx = info[:, 2:3]
+
+        with tf.GradientTape() as tape:
+            # Obtain the predictions
+            y_pred = self(x, training=True)
+
+            # Compute the main loss
+            mse = k.mean(flags * k.square(y_pred - y_true))
+
+            # Compute the constraint regularization term
+            delta_pred = y_pred[1:] - y_pred[:-1]
+            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
+            deltadiff = delta_pred - delta_rul
+            cst = k.mean(k.square(deltadiff))
+
+            # Additional regularization term for positivity
+            positivity_regularizer = k.mean(self.gamma * k.square(k.maximum(0.0, -y_pred)))
+
+            # Combine all regularization terms
+            loss = self.alpha * mse + self.beta * cst + positivity_regularizer
+
+        # Compute gradients
+        tr_vars = self.trainable_variables
+        grads = tape.gradient(loss, tr_vars)
+
+        # Update the network weights
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+
+        # Track the loss change
+        self.ls_tracker.update_state(loss)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+    
+        # Return additional regularization term for monitoring if needed
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result(),
+                'positivity_regularizer': positivity_regularizer}
