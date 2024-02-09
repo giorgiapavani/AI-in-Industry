@@ -512,3 +512,181 @@ class CstPosRULRegressor(MLPRegressor):
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result(),
                 'positivity_regularizer': positivity_regularizer}
+        
+class CstRULRegressor(MLPRegressor):
+    def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
+        super(CstRULRegressor, self).__init__(input_shape, hidden)
+        # Weights
+        self.alpha = alpha
+        self.beta = beta
+        self.maxrul = maxrul
+        # Loss trackers
+        self.ls_tracker = keras.metrics.Mean(name='loss')
+        self.mse_tracker = keras.metrics.Mean(name='mse')
+        self.cst_tracker = keras.metrics.Mean(name='cst')
+
+    def train_step(self, data):
+        x, info = data
+        y_true = info[:, 0:1]
+        flags = info[:, 1:2]
+        idx = info[:, 2:3]
+
+        with tf.GradientTape() as tape:
+            # Obtain the predictions
+            y_pred = self(x, training=True)
+            # Compute the main loss
+            mse = k.mean(flags * k.square(y_pred-y_true))
+            # Compute the constraint regularization term
+            delta_pred = y_pred[1:] - y_pred[:-1]
+            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
+            deltadiff = delta_pred - delta_rul
+            cst = k.mean(k.square(deltadiff))
+            loss = self.alpha * mse + self.beta * cst
+
+        # Compute gradients
+        tr_vars = self.trainable_variables
+        grads = tape.gradient(loss, tr_vars)
+
+        # Update the network weights
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+
+        # Track the loss change
+        self.ls_tracker.update_state(loss)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result()}
+
+    @property
+    def metrics(self):
+        return [self.ls_tracker,
+                self.mse_tracker,
+                self.cst_tracker]
+
+
+def DIDI_r(data, pred, protected):
+    res = 0
+    avg = np.mean(pred)
+    for aname, dom in protected.items():
+        for val in dom:
+            mask = (data[aname] == val)
+            res += abs(avg - np.mean(pred[mask]))
+    return res
+
+
+class CstDIDIRegressor(MLPRegressor):
+    def __init__(self, attributes, protected, alpha, thr, hidden=[]):
+        super(CstDIDIRegressor, self).__init__(len(attributes), hidden)
+        # Weight and threshold
+        self.alpha = alpha
+        self.thr = thr
+        # Translate attribute names to indices
+        self.protected = {list(attributes).index(k): dom for k, dom in protected.items()}
+        # Loss trackers
+        self.ls_tracker = keras.metrics.Mean(name='loss')
+        self.mse_tracker = keras.metrics.Mean(name='mse')
+        self.cst_tracker = keras.metrics.Mean(name='cst')
+
+    def train_step(self, data):
+        x, y_true = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            mse = self.compiled_loss(y_true, y_pred)
+            # Compute the constraint regularization term
+            ymean = k.mean(y_pred)
+            didi = 0
+            for aidx, dom in self.protected.items():
+                for val in dom:
+                    mask = (x[:, aidx] == val)
+                    didi += k.abs(ymean - k.mean(y_pred[mask]))
+            cst = k.maximum(0.0, didi - self.thr)
+            loss = mse + self.alpha * cst
+
+        # Compute gradients
+        tr_vars = self.trainable_variables
+        grads = tape.gradient(loss, tr_vars)
+
+        # Update the network weights
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+
+        # Track the loss change
+        self.ls_tracker.update_state(loss)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result()}
+
+    @property
+    def metrics(self):
+        return [self.ls_tracker,
+                self.mse_tracker,
+                self.cst_tracker]
+
+
+
+class LagDualDIDIRegressor(MLPRegressor):
+    def __init__(self, attributes, protected, thr, hidden=[]):
+        super(LagDualDIDIRegressor, self).__init__(len(attributes), hidden)
+        # Weight and threshold
+        self.alpha = tf.Variable(0.5, name='alpha')
+        self.thr = thr
+        # Translate attribute names to indices
+        self.protected = {list(attributes).index(k): dom for k, dom in protected.items()}
+        # Loss trackers
+        self.ls_tracker = keras.metrics.Mean(name='loss')
+        self.mse_tracker = keras.metrics.Mean(name='mse')
+        self.cst_tracker = keras.metrics.Mean(name='cst')
+
+
+    def __custom_loss(self, x, y_true, sign=1):
+        y_pred = self(x, training=True)
+        # loss, mse, cst = self.__custom_loss(x, y_true, y_pred)
+        mse = self.compiled_loss(y_true, y_pred)
+        # Compute the constraint regularization term
+        ymean = k.mean(y_pred)
+        didi = 0
+        for aidx, dom in self.protected.items():
+            for val in dom:
+                mask = (x[:, aidx] == val)
+                didi += k.abs(ymean - k.mean(y_pred[mask]))
+        cst = k.maximum(0.0, didi - self.thr)
+        loss = mse + self.alpha * cst
+        return sign*loss, mse, cst
+
+    def train_step(self, data):
+        x, y_true = data
+
+        with tf.GradientTape() as tape:
+            loss, mse, cst = self.__custom_loss(x, y_true, sign=1)
+
+        # Separate training variables
+        tr_vars = self.trainable_variables
+        wgt_vars = tr_vars[:-1]
+        mul_vars = tr_vars[-1:]
+
+        # Update the network weights
+        grads = tape.gradient(loss, wgt_vars)
+        self.optimizer.apply_gradients(zip(grads, wgt_vars))
+
+        with tf.GradientTape() as tape:
+            loss, mse, cst = self.__custom_loss(x, y_true, sign=-1)
+
+        grads = tape.gradient(loss, mul_vars)
+        self.optimizer.apply_gradients(zip(grads, mul_vars))
+
+        # Track the loss change
+        self.ls_tracker.update_state(loss)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result()}
+
+    @property
+    def metrics(self):
+        return [self.ls_tracker,
+                self.mse_tracker,
+                self.cst_tracker]
