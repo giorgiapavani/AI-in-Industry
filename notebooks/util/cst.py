@@ -657,26 +657,21 @@ class LagDualDIDIRegressor(MLPRegressor):
         return sign*loss, mse, cst
 
     def train_step(self, data):
-        x, y_true = data
+        x, info = data
+        y_true = info[:, 0:1]
+        flags = info[:, 1:2]
+        idx = info[:, 2:3]
 
         with tf.GradientTape() as tape:
             loss, mse, cst = self.__custom_loss(x, y_true, sign=1)
 
         # Separate training variables
         tr_vars = self.trainable_variables
-        wgt_vars = tr_vars[:-1]
-        mul_vars = tr_vars[-1:]
 
         # Update the network weights
-        grads = tape.gradient(loss, wgt_vars)
-        self.optimizer.apply_gradients(zip(grads, wgt_vars))
-
-        with tf.GradientTape() as tape:
-            loss, mse, cst = self.__custom_loss(x, y_true, sign=-1)
-
-        grads = tape.gradient(loss, mul_vars)
-        self.optimizer.apply_gradients(zip(grads, mul_vars))
-
+        grads = tape.gradient(loss, tr_vars)
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+        
         # Track the loss change
         self.ls_tracker.update_state(loss)
         self.mse_tracker.update_state(mse)
