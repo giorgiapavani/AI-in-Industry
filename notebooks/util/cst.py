@@ -685,3 +685,54 @@ class LagDualDIDIRegressor(MLPRegressor):
         return [self.ls_tracker,
                 self.mse_tracker,
                 self.cst_tracker]
+
+        
+# TODO: capire se peso dinamica va dato solo a cst o anche a mse, e se va bene dare a cst solo peso dinamico o se ha senso fare somma di beta e lagr_multiplier        
+class CstRULRegressorWithLagrangian(CstRULRegressor):
+    def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
+        super(CstRULRegressorWithLagrangian, self).__init__(input_shape, alpha, beta, maxrul, hidden)
+
+        # Initialize Lagrange multiplier for the constraint term
+        self.lagr_multiplier = tf.Variable(1.0, trainable=True, name="lagr_multiplier")
+
+    def train_step(self, data):
+        x, info = data
+        y_true = info[:, 0:1]
+        flags = info[:, 1:2]
+        idx = info[:, 2:3]
+
+        with tf.GradientTape() as tape:
+            # Obtain the predictions
+            y_pred = self(x, training=True)
+
+            # Compute the main loss
+            mse = k.mean(flags * k.square(y_pred - y_true))
+
+            # Compute the constraint regularization term
+            delta_pred = y_pred[1:] - y_pred[:-1]
+            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
+            deltadiff = delta_pred - delta_rul
+            cst = k.mean(k.square(deltadiff))
+
+            # Lagrangian objective: alpha * mse + beta * cst + lagr_multiplier * cst -> in this case, the lagrangian multiplier is the weight of the constraint term
+            lagrangian_obj = self.alpha * mse + self.beta * cst + self.lagr_multiplier * cst
+
+        # Compute gradients
+        tr_vars = self.trainable_variables + [self.lagr_multiplier]
+        grads = tape.gradient(lagrangian_obj, tr_vars)
+
+        # Update the network weights and Lagrange multiplier
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+
+        # Update the Lagrange multiplier
+        self.lagr_multiplier.assign(tf.maximum(0.0, self.lagr_multiplier))
+
+        # Track the loss change
+        self.ls_tracker.update_state(lagrangian_obj)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result()}
+
