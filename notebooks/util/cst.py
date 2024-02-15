@@ -266,7 +266,7 @@ def evaluation(pred, ts_s):
         mse_seeds.append(mean_squared_error(ts_s["rul"], i)) # Calcola la media e la deviazione standard delle MSE
     mse_mean = np.mean(mse_seeds) 
     mse_std = np.std(mse_seeds) 
-    print(f'Media della MSE: {mse_mean:.4f}\nDeviazione standard della MSE: {mse_std:.4f}')
+    print(f'Mean value for MSE: {mse_mean:.4f}\nStandard Deviation of MSE: {mse_std:.4f}')
     return mse_seeds, mse_mean, mse_std
 
 def plot_results(mse_seeds, mse_mean, mse_std):
@@ -280,6 +280,28 @@ def plot_results(mse_seeds, mse_mean, mse_std):
     plt.xlabel('Seed')
     plt.title('MSE distribution')
     plt.show()
+    
+# Function to save predictions to an Excel file
+def save_results_to_excel(task_name, mse_mean, mse_std, predictions, excel_file):
+    # Try to read existing data from the Excel file
+    try:
+        df = pd.read_excel(excel_file)
+        new_df = pd.DataFrame({'Task': [task_name], "Mean":[mse_mean], "Std":[mse_std]})
+        new_df = pd.concat([new_df, pd.DataFrame({'Seed_{}'.format(i): [value] for i, value in enumerate(predictions)})], axis=1)
+        #if task_name is already in the file, select the row and update it
+        if task_name in df['Task'].values:
+            df.loc[df['Task'] == task_name] = new_df
+        else:
+            # Concatenate the existing DataFrame with the new one
+            df = pd.concat([df, new_df], axis=0)
+    except FileNotFoundError:
+        # If the file doesn't exist, create a new DataFrame
+        df = pd.DataFrame({'Task': [task_name], "Mean":[mse_mean], "Std":[mse_std]})
+        df = pd.concat([df, pd.DataFrame({'Seed_{}'.format(i): [value] for i, value in enumerate(predictions)})], axis=1)
+
+    # Save the DataFrame back to the Excel file
+    df.set_index('Task', inplace=False)
+    df.to_excel(excel_file, index=False)
     
     
 def split_data(ts, trs=0, tru=0, trs_ratio=0, tru_ratio=0):
@@ -333,14 +355,13 @@ class MLPRegressor(keras.Model):
 
 #this function generates a list of batches for the training set, where each batch is a sequence of sorted samples from the same machine 
 class CstBatchGenerator(tf.keras.utils.Sequence):
-    def __init__(self, data, in_cols, batch_size, seed=42, validation_split=0.2):
+    def __init__(self, data, in_cols, batch_size, seed=42):
         super(CstBatchGenerator).__init__()
         self.data = data
         self.in_cols = in_cols #dt_in (p, s and rul)
         self.dpm = split_by_field(data, 'machine')
         self.rng = np.random.default_rng(seed)
         self.batch_size = batch_size
-        self.val_size = validation_split
         # Build the first sequence of batches
         self.__build_batches()
 
@@ -447,12 +468,38 @@ class CstRULRegressor(MLPRegressor):
         return {'loss': self.ls_tracker.result(),
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result()}
+    
+    '''    
+    def val_step(self, data):
+        x_val, info_val = data
+        y_true_val = info_val[:, 0:1]
+        flags_val = info_val[:, 1:2]
+        idx_val = info_val[:, 2:3]
+
+        y_pred_val = self(x_val, training=False)
+        mse_val = k.mean(flags_val * k.square(y_pred_val - y_true_val))
+        delta_pred_val = y_pred_val[1:] - y_pred_val[:-1]
+        delta_rul_val = -(idx_val[1:] - idx_val[:-1]) / self.maxrul
+        deltadiff_val = delta_pred_val - delta_rul_val
+        cst_val = k.mean(k.square(deltadiff_val))
+        val_loss = self.alpha * mse_val + self.beta * cst_val
+
+        self.val_ls_tracker.update_state(val_loss)
+        self.val_mse_tracker.update_state(mse_val)
+        self.val_cst_tracker.update_state(cst_val)
+
+        return {'val_loss': self.val_ls_tracker.result(),
+                'val_mse': self.val_mse_tracker.result(),
+                'val_cst': self.val_cst_tracker.result()}
+                
+    '''
 
     @property
     def metrics(self):
-        return [self.ls_tracker,
-                self.mse_tracker,
+        return [self.ls_tracker, 
+                self.mse_tracker, 
                 self.cst_tracker]
+                #self.val_ls_tracker, self.val_mse_tracker, self.val_cst_tracker]
         
 
 class CstPosRULRegressor(MLPRegressor):
