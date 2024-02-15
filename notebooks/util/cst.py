@@ -735,4 +735,55 @@ class CstRULRegressorWithLagrangian(CstRULRegressor):
         return {'loss': self.ls_tracker.result(),
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result()}
+        
+        
+class CstRULRegressorWithLagrangians(CstRULRegressor):
+    def __init__(self, input_shape, maxrul, hidden=[], alpha=0, beta=0):
+        super(CstRULRegressorWithLagrangians, self).__init__(input_shape, alpha, beta, maxrul, hidden)
+
+        # Initialize Lagrange multiplier for the constraint term
+        self.lagr_multiplier_mse = tf.Variable(1.0, trainable=True, name="lagr_multiplier_mse")
+        self.lagr_multiplier_cst = tf.Variable(1.0, trainable=True, name="lagr_multiplier_cst")
+
+    def train_step(self, data):
+        x, info = data
+        y_true = info[:, 0:1]
+        flags = info[:, 1:2]
+        idx = info[:, 2:3]
+
+        with tf.GradientTape() as tape:
+            # Obtain the predictions
+            y_pred = self(x, training=True)
+
+            # Compute the main loss
+            mse = k.mean(flags * k.square(y_pred - y_true))
+
+            # Compute the constraint regularization term
+            delta_pred = y_pred[1:] - y_pred[:-1]
+            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
+            deltadiff = delta_pred - delta_rul
+            cst = k.mean(k.square(deltadiff))
+
+            # Lagrangian objective: alpha * mse + beta * cst + lagr_multiplier * cst -> in this case, the lagrangian multiplier is the weight of the constraint term
+            lagrangian_obj = self.lagr_multiplier_mse * mse + self.lagr_multiplier_cst * cst
+
+        # Compute gradients
+        tr_vars = self.trainable_variables + [self.lagr_multiplier_mse, self.lagr_multiplier_cst]
+        grads = tape.gradient(lagrangian_obj, tr_vars)
+
+        # Update the network weights and Lagrange multiplier
+        self.optimizer.apply_gradients(zip(grads, tr_vars))
+
+        # Update the Lagrange multipliers
+        self.lagr_multiplier_mse.assign(tf.maximum(0.0, self.lagr_multiplier_mse))
+        self.lagr_multiplier_cst.assign(tf.maximum(0.0, self.lagr_multiplier_cst))
+
+        # Track the loss change
+        self.ls_tracker.update_state(lagrangian_obj)
+        self.mse_tracker.update_state(mse)
+        self.cst_tracker.update_state(cst)
+
+        return {'loss': self.ls_tracker.result(),
+                'mse': self.mse_tracker.result(),
+                'cst': self.cst_tracker.result()}
 
