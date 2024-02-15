@@ -303,6 +303,12 @@ def save_results_to_excel(task_name, mse_mean, mse_std, predictions, excel_file)
     df.set_index('Task', inplace=False)
     df.to_excel(excel_file, index=False)
     
+#function to save predictions a real rul in a file excel
+def save_predictions_to_excel(predictions, real, file_name):
+    df = pd.DataFrame({'Seed_{}'.format(i): value for i, value in enumerate(predictions)})
+    df = pd.concat([df, real.reset_index(drop=True)], axis=1)
+    df.to_excel('./predictions/'+file_name, index=False)
+    
     
 def split_data(ts, trs=0, tru=0, trs_ratio=0, tru_ratio=0):
     if type(tru) == int: #only supervised data
@@ -435,6 +441,10 @@ class CstRULRegressor(MLPRegressor):
         self.ls_tracker = keras.metrics.Mean(name='loss')
         self.mse_tracker = keras.metrics.Mean(name='mse')
         self.cst_tracker = keras.metrics.Mean(name='cst') #constraint term
+        # Validation loss trackers
+        self.val_ls_tracker = keras.metrics.Mean(name='val_loss')
+        self.val_mse_tracker = keras.metrics.Mean(name='val_mse')
+        self.val_cst_tracker = keras.metrics.Mean(name='val_cst')
 
     def train_step(self, data):
         x, info = data #get_item from batch generator
@@ -469,8 +479,9 @@ class CstRULRegressor(MLPRegressor):
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result()}
     
-    '''    
+        
     def val_step(self, data):
+        print(data)
         x_val, info_val = data
         y_true_val = info_val[:, 0:1]
         flags_val = info_val[:, 1:2]
@@ -492,14 +503,16 @@ class CstRULRegressor(MLPRegressor):
                 'val_mse': self.val_mse_tracker.result(),
                 'val_cst': self.val_cst_tracker.result()}
                 
-    '''
+    
 
     @property
     def metrics(self):
         return [self.ls_tracker, 
                 self.mse_tracker, 
-                self.cst_tracker]
-                #self.val_ls_tracker, self.val_mse_tracker, self.val_cst_tracker]
+                self.cst_tracker,
+                self.val_ls_tracker, 
+                self.val_mse_tracker, 
+                self.val_cst_tracker]
         
 
 class CstPosRULRegressor(MLPRegressor):
@@ -559,7 +572,8 @@ class CstPosRULRegressor(MLPRegressor):
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result(),
                 'positivity_regularizer': positivity_regularizer}
-        
+
+'''        
 class CstRULRegressor(MLPRegressor):
     def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
         super(CstRULRegressor, self).__init__(input_shape, hidden)
@@ -610,6 +624,7 @@ class CstRULRegressor(MLPRegressor):
         return [self.ls_tracker,
                 self.mse_tracker,
                 self.cst_tracker]
+    '''
 
 
 def DIDI_r(data, pred, protected):
