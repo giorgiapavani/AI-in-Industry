@@ -456,7 +456,7 @@ class CstRULRegressor(MLPRegressor):
             # Obtain the predictions
             y_pred = self(x, training=True)
             # Compute the main loss (0 for unsupervised data)
-            mse = k.mean(flags * k.square(y_pred-y_true))
+            mse = k.mean(flags * k.square(y_pred -y_true))
             # Compute the constraint regularization term
             delta_pred = y_pred[1:] - y_pred[:-1]
             delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
@@ -475,20 +475,21 @@ class CstRULRegressor(MLPRegressor):
         self.ls_tracker.update_state(loss)
         self.mse_tracker.update_state(mse)
         self.cst_tracker.update_state(cst)
+        
         return {'loss': self.ls_tracker.result(),
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result()}
     
         
-    def val_step(self, data):
-        print(data)
+    def test_step(self, data):
+        
         x_val, info_val = data
         y_true_val = info_val[:, 0:1]
         flags_val = info_val[:, 1:2]
         idx_val = info_val[:, 2:3]
 
         y_pred_val = self(x_val, training=False)
-        mse_val = k.mean(flags_val * k.square(y_pred_val - y_true_val))
+        mse_val = k.mean(flags_val * k.square(y_pred_val- y_true_val))
         delta_pred_val = y_pred_val[1:] - y_pred_val[:-1]
         delta_rul_val = -(idx_val[1:] - idx_val[:-1]) / self.maxrul
         deltadiff_val = delta_pred_val - delta_rul_val
@@ -499,9 +500,9 @@ class CstRULRegressor(MLPRegressor):
         self.val_mse_tracker.update_state(mse_val)
         self.val_cst_tracker.update_state(cst_val)
 
-        return {'val_loss': self.val_ls_tracker.result(),
-                'val_mse': self.val_mse_tracker.result(),
-                'val_cst': self.val_cst_tracker.result()}
+        return {'loss': self.val_ls_tracker.result(),
+                'mse': self.val_mse_tracker.result(),
+                'cst': self.val_cst_tracker.result()}
                 
     
 
@@ -572,6 +573,7 @@ class CstPosRULRegressor(MLPRegressor):
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result(),
                 'positivity_regularizer': positivity_regularizer}
+    
 
 '''        
 class CstRULRegressor(MLPRegressor):
