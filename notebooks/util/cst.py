@@ -175,15 +175,15 @@ def split_by_field(data, field):
     return res
 
 
-def partition_by_machine(data, tr_machines, val_mcn):
+def partition_by_machine(data, tr_machines, val_machines):
     # Separate
     tr_machines = set(tr_machines)
-    val_mcn = set(val_mcn)
+    val_machines = set(val_machines)
     tr_list, ts_list, val_list = [], [], []
     for mcn, gdata in data.groupby('machine'):
         if mcn in tr_machines:
             tr_list.append(gdata)
-        elif mcn in val_mcn:
+        elif mcn in val_machines:
             val_list.append(gdata)
         else:
             ts_list.append(gdata)
@@ -194,7 +194,24 @@ def partition_by_machine(data, tr_machines, val_mcn):
         ts_data = pd.concat(ts_list)
     else:
         ts_data = pd.DataFrame(columns=tr_data.columns)
-    return tr_data, ts_data, val_data
+    return tr_data, val_data, ts_data
+
+def partition_by_machine_mixed(data, sup_machines):
+    # Separate
+    sup_machines = set(sup_machines)
+    sup_list, unsup_list = [], []
+    for mcn, gdata in data.groupby('machine'):
+        if mcn in sup_machines:
+            sup_list.append(gdata)
+        else:
+            unsup_list.append(gdata)
+    # Collate again
+    sup_data = pd.concat(sup_list)
+    if len(unsup_list) > 0:
+        unsup_data = pd.concat(unsup_list)
+    else:
+        unsup_data = pd.DataFrame(columns=sup_data.columns)
+    return sup_data, unsup_data
 
 def split_machines(data, supervised, unsupervised, val = 0.2):
     np.random.seed(42)
@@ -228,15 +245,15 @@ def split_machines(data, supervised, unsupervised, val = 0.2):
         tvu_mcn = list(machines[sep_trs:sep_val_u]) 
         tru_mcn = list(machines[sep_val_u:sep_tru]) #prende machines con dati non supervisionati
         ts_mcn = list(machines[sep_tru:]) #restanti per test (25% del totale)
-        tv_mcn = tvs_mcn.concat(tvu_mcn)
+        tv_mcn = tvs_mcn + tvu_mcn
         print(f'Num. machines: {len(trs_mcn)} (supervised), {len(tru_mcn)} (unsupervised), {len(tv_mcn)} (validation), {len(ts_mcn)} (test)')
         tr, ts, val = partition_by_machine(data, trs_mcn + tru_mcn, tv_mcn)
-        trs, tru = partition_by_machine(tr, trs_mcn)
+        trs, tru = partition_by_machine_mixed(tr, trs_mcn)
         return tr, ts, trs, tru, val
     
     
 #function to standardize data and normalize rul values
-def standardize(tr, ts, dt_in):
+def standardize(tr, vs, ts, dt_in):
     trmean = tr[dt_in].mean() #NB dt_in selects columns with sensors data
     trstd = tr[dt_in].std().replace(to_replace=0, value=1) # handle static fields
 
@@ -245,11 +262,15 @@ def standardize(tr, ts, dt_in):
     trmaxrul = tr_s['rul'].max()
     tr_s['rul'] = tr_s['rul'] / trmaxrul
     
+    vs_s = vs.copy()
+    vs_s[dt_in] = (vs_s[dt_in] - trmean) / trstd #standardize test set 
+    vs_s['rul'] = vs_s['rul'] / trmaxrul
+    
     ts_s = ts.copy()
     ts_s[dt_in] = (ts_s[dt_in] - trmean) / trstd #standardize test set 
     ts_s['rul'] = ts_s['rul'] / trmaxrul
     
-    return tr_s, ts_s, trmaxrul
+    return tr_s, vs_s, ts_s, trmaxrul
 
 def standardize_mixed(tr, trs, tru, ts, dt_in):
     trmean = tr[dt_in].mean() #NB dt_in selects columns with sensors data
@@ -540,6 +561,11 @@ class CstPosRULRegressor(MLPRegressor):
         self.ls_tracker = keras.metrics.Mean(name='loss')
         self.mse_tracker = keras.metrics.Mean(name='mse')
         self.cst_tracker = keras.metrics.Mean(name='cst')
+        
+        # Validation loss trackers
+        self.val_ls_tracker = keras.metrics.Mean(name='val_loss')
+        self.val_mse_tracker = keras.metrics.Mean(name='val_mse')
+        self.val_cst_tracker = keras.metrics.Mean(name='val_cst')
 
     # ... (rest of the class definition remains the same)
 
