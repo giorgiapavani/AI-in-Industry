@@ -175,24 +175,28 @@ def split_by_field(data, field):
     return res
 
 
-def partition_by_machine(data, tr_machines):
+def partition_by_machine(data, tr_machines, val_mcn):
     # Separate
     tr_machines = set(tr_machines)
-    tr_list, ts_list = [], []
+    val_mcn = set(val_mcn)
+    tr_list, ts_list, val_list = [], [], []
     for mcn, gdata in data.groupby('machine'):
         if mcn in tr_machines:
             tr_list.append(gdata)
+        elif mcn in val_mcn:
+            val_list.append(gdata)
         else:
             ts_list.append(gdata)
     # Collate again
     tr_data = pd.concat(tr_list)
+    val_data = pd.concat(val_list)
     if len(ts_list) > 0:
         ts_data = pd.concat(ts_list)
     else:
         ts_data = pd.DataFrame(columns=tr_data.columns)
-    return tr_data, ts_data
+    return tr_data, ts_data, val_data
 
-def split_machines(data, supervised, unsupervised):
+def split_machines(data, supervised, unsupervised, val = 0.2):
     np.random.seed(42)
     machines = data.machine.unique()
     np.random.shuffle(machines)
@@ -200,27 +204,35 @@ def split_machines(data, supervised, unsupervised):
     sep_trs = int(supervised * len(machines))
     sep_tru = int(unsupervised * len(machines))
     
-    
     if unsupervised == 0:
-        trs_mcn = list(machines[:sep_trs]) #prende machines con dati supervisionati
+        sep_val = int(val * sep_trs)
+        tv_mcn = list(machines[:sep_val]) 
+        trs_mcn = list(machines[sep_val:sep_trs]) #prende machines con dati supervisionati
         ts_mcn = list(machines[sep_trs:]) #restanti per test (25% del totale)
-        print(f'Num. machines: {len(trs_mcn)} (supervised), {len(ts_mcn)} (test)')
-        return partition_by_machine(data, trs_mcn)
+        print(f'Num. machines: {len(trs_mcn)} (supervised), {len(tv_mcn)} (validation), {len(ts_mcn)} (test)')
+        return partition_by_machine(data, trs_mcn, tv_mcn)
     
     elif supervised == 0:
-        tru_mcn = list(machines[:sep_tru]) #prende machines con dati unsupervisised
+        sep_val = int(val * sep_tru)
+        tv_mcn = list(machines[:sep_val]) 
+        tru_mcn = list(machines[sep_val:sep_tru]) #prende machines con dati unsupervisised
         ts_mcn = list(machines[sep_tru:]) #restanti per test (25% del totale)
-        print(f'Num. machines: {len(tru_mcn)} (unsupervised), {len(ts_mcn)} (test)')
-        return partition_by_machine(data, tru_mcn)
+        print(f'Num. machines: {len(tru_mcn)} (unsupervised), {len(tv_mcn)} (validation), {len(ts_mcn)} (test)')
+        return partition_by_machine(data, tru_mcn, tv_mcn)
     
     else:
-        trs_mcn = list(machines[:sep_trs]) #prende machines con dati supervisionati
-        tru_mcn = list(machines[sep_trs:sep_tru]) #prende machines con dati non supervisionati
+        sep_val_s = int(val/2 * sep_trs)
+        sep_val_u = int(val/2 * sep_tru)
+        tvs_mcn = list(machines[:sep_val_s]) 
+        trs_mcn = list(machines[sep_val_s:sep_trs]) #prende machines con dati supervisionati
+        tvu_mcn = list(machines[sep_trs:sep_val_u]) 
+        tru_mcn = list(machines[sep_val_u:sep_tru]) #prende machines con dati non supervisionati
         ts_mcn = list(machines[sep_tru:]) #restanti per test (25% del totale)
-        print(f'Num. machines: {len(trs_mcn)} (supervised), {len(tru_mcn)} (unsupervised), {len(ts_mcn)} (test)')
-        tr, ts = partition_by_machine(data, trs_mcn + tru_mcn)
+        tv_mcn = tvs_mcn.concat(tvu_mcn)
+        print(f'Num. machines: {len(trs_mcn)} (supervised), {len(tru_mcn)} (unsupervised), {len(tv_mcn)} (validation), {len(ts_mcn)} (test)')
+        tr, ts, val = partition_by_machine(data, trs_mcn + tru_mcn, tv_mcn)
         trs, tru = partition_by_machine(tr, trs_mcn)
-        return tr, ts, trs, tru
+        return tr, ts, trs, tru, val
     
     
 #function to standardize data and normalize rul values
@@ -573,185 +585,36 @@ class CstPosRULRegressor(MLPRegressor):
                 'mse': self.mse_tracker.result(),
                 'cst': self.cst_tracker.result(),
                 'positivity_regularizer': positivity_regularizer}
+        
+    def test_step(self, data):
+        
+        x_val, info_val = data
+        y_true_val = info_val[:, 0:1]
+        flags_val = info_val[:, 1:2]
+        idx_val = info_val[:, 2:3]
+
+        y_pred_val = self(x_val, training=False)
+        mse_val = k.mean(flags_val * k.square(y_pred_val- y_true_val))
+        delta_pred_val = y_pred_val[1:] - y_pred_val[:-1]
+        delta_rul_val = -(idx_val[1:] - idx_val[:-1]) / self.maxrul
+        deltadiff_val = delta_pred_val - delta_rul_val
+        cst_val = k.mean(k.square(deltadiff_val))
+        
+        
+        positivity_regularizer = k.mean(self.gamma * k.square(k.maximum(0.0, - y_pred_val)))
+        
+        val_loss = self.alpha * mse_val + self.beta * cst_val + positivity_regularizer
+
+        self.val_ls_tracker.update_state(val_loss)
+        self.val_mse_tracker.update_state(mse_val)
+        self.val_cst_tracker.update_state(cst_val)
+
+        return {'loss': self.val_ls_tracker.result(),
+                'mse': self.val_mse_tracker.result(),
+                'cst': self.val_cst_tracker.result(),
+                'positivity_regularizer': positivity_regularizer}
     
-
-'''        
-class CstRULRegressor(MLPRegressor):
-    def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
-        super(CstRULRegressor, self).__init__(input_shape, hidden)
-        # Weights
-        self.alpha = alpha
-        self.beta = beta
-        self.maxrul = maxrul
-        # Loss trackers
-        self.ls_tracker = keras.metrics.Mean(name='loss')
-        self.mse_tracker = keras.metrics.Mean(name='mse')
-        self.cst_tracker = keras.metrics.Mean(name='cst')
-
-    def train_step(self, data):
-        x, info = data
-        y_true = info[:, 0:1]
-        flags = info[:, 1:2]
-        idx = info[:, 2:3]
-
-        with tf.GradientTape() as tape:
-            # Obtain the predictions
-            y_pred = self(x, training=True)
-            # Compute the main loss
-            mse = k.mean(flags * k.square(y_pred-y_true))
-            # Compute the constraint regularization term
-            delta_pred = y_pred[1:] - y_pred[:-1]
-            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
-            deltadiff = delta_pred - delta_rul
-            cst = k.mean(k.square(deltadiff))
-            loss = self.alpha * mse + self.beta * cst
-
-        # Compute gradients
-        tr_vars = self.trainable_variables
-        grads = tape.gradient(loss, tr_vars)
-
-        # Update the network weights
-        self.optimizer.apply_gradients(zip(grads, tr_vars))
-
-        # Track the loss change
-        self.ls_tracker.update_state(loss)
-        self.mse_tracker.update_state(mse)
-        self.cst_tracker.update_state(cst)
-        return {'loss': self.ls_tracker.result(),
-                'mse': self.mse_tracker.result(),
-                'cst': self.cst_tracker.result()}
-
-    @property
-    def metrics(self):
-        return [self.ls_tracker,
-                self.mse_tracker,
-                self.cst_tracker]
-    '''
-
-
-def DIDI_r(data, pred, protected):
-    res = 0
-    avg = np.mean(pred)
-    for aname, dom in protected.items():
-        for val in dom:
-            mask = (data[aname] == val)
-            res += abs(avg - np.mean(pred[mask]))
-    return res
-
-
-class CstDIDIRegressor(MLPRegressor):
-    def __init__(self, attributes, protected, alpha, thr, hidden=[]):
-        super(CstDIDIRegressor, self).__init__(len(attributes), hidden)
-        # Weight and threshold
-        self.alpha = alpha
-        self.thr = thr
-        # Translate attribute names to indices
-        self.protected = {list(attributes).index(k): dom for k, dom in protected.items()}
-        # Loss trackers
-        self.ls_tracker = keras.metrics.Mean(name='loss')
-        self.mse_tracker = keras.metrics.Mean(name='mse')
-        self.cst_tracker = keras.metrics.Mean(name='cst')
-
-    def train_step(self, data):
-        x, y_true = data
-
-        with tf.GradientTape() as tape:
-            y_pred = self(x, training=True)
-            mse = self.compiled_loss(y_true, y_pred)
-            # Compute the constraint regularization term
-            ymean = k.mean(y_pred)
-            didi = 0
-            for aidx, dom in self.protected.items():
-                for val in dom:
-                    mask = (x[:, aidx] == val)
-                    didi += k.abs(ymean - k.mean(y_pred[mask]))
-            cst = k.maximum(0.0, didi - self.thr)
-            loss = mse + self.alpha * cst
-
-        # Compute gradients
-        tr_vars = self.trainable_variables
-        grads = tape.gradient(loss, tr_vars)
-
-        # Update the network weights
-        self.optimizer.apply_gradients(zip(grads, tr_vars))
-
-        # Track the loss change
-        self.ls_tracker.update_state(loss)
-        self.mse_tracker.update_state(mse)
-        self.cst_tracker.update_state(cst)
-        return {'loss': self.ls_tracker.result(),
-                'mse': self.mse_tracker.result(),
-                'cst': self.cst_tracker.result()}
-
-    @property
-    def metrics(self):
-        return [self.ls_tracker,
-                self.mse_tracker,
-                self.cst_tracker]
-
-
-
-class LagDualDIDIRegressor(MLPRegressor):
-    def __init__(self, attributes, protected, thr, hidden=[]):
-        super(LagDualDIDIRegressor, self).__init__(len(attributes), hidden)
-        # Weight and threshold
-        self.alpha = tf.Variable(0.5, name='alpha')
-        self.thr = thr
-        # Translate attribute names to indices
-        self.protected = {list(attributes).index(k): dom for k, dom in protected.items()}
-        # Loss trackers
-        self.ls_tracker = keras.metrics.Mean(name='loss')
-        self.mse_tracker = keras.metrics.Mean(name='mse')
-        self.cst_tracker = keras.metrics.Mean(name='cst')
-
-
-    def __custom_loss(self, x, y_true, sign=1):
-        y_pred = self(x, training=True)
-        # loss, mse, cst = self.__custom_loss(x, y_true, y_pred)
-        mse = self.compiled_loss(y_true, y_pred)
-        # Compute the constraint regularization term
-        ymean = k.mean(y_pred)
-        didi = 0
-        for aidx, dom in self.protected.items():
-            for val in dom:
-                mask = (x[:, aidx] == val)
-                didi += k.abs(ymean - k.mean(y_pred[mask]))
-        cst = k.maximum(0.0, didi - self.thr)
-        loss = mse + self.alpha * cst
-        return sign*loss, mse, cst
-
-    def train_step(self, data):
-        x, info = data
-        y_true = info[:, 0:1]
-        flags = info[:, 1:2]
-        idx = info[:, 2:3]
-
-        with tf.GradientTape() as tape:
-            loss, mse, cst = self.__custom_loss(x, y_true, sign=1)
-
-        # Separate training variables
-        tr_vars = self.trainable_variables
-
-        # Update the network weights
-        grads = tape.gradient(loss, tr_vars)
-        self.optimizer.apply_gradients(zip(grads, tr_vars))
         
-        # Track the loss change
-        self.ls_tracker.update_state(loss)
-        self.mse_tracker.update_state(mse)
-        self.cst_tracker.update_state(cst)
-        return {'loss': self.ls_tracker.result(),
-                'mse': self.mse_tracker.result(),
-                'cst': self.cst_tracker.result()}
-
-    @property
-    def metrics(self):
-        return [self.ls_tracker,
-                self.mse_tracker,
-                self.cst_tracker]
-
-        
-# TODO: capire se peso dinamica va dato solo a cst o anche a mse, e se va bene dare a cst solo peso dinamico o se ha senso fare somma di beta e lagr_multiplier        
 class CstRULRegressorWithLagrangian(CstRULRegressor):
     def __init__(self, input_shape, alpha, beta, maxrul, hidden=[]):
         super(CstRULRegressorWithLagrangian, self).__init__(input_shape, alpha, beta, maxrul, hidden)
@@ -779,7 +642,7 @@ class CstRULRegressorWithLagrangian(CstRULRegressor):
             cst = k.mean(k.square(deltadiff))
 
             # Lagrangian objective: alpha * mse + beta * cst + lagr_multiplier * cst -> in this case, the lagrangian multiplier is the weight of the constraint term
-            lagrangian_obj = self.alpha * mse + self.beta * cst + self.lagr_multiplier * cst
+            lagrangian_obj = self.alpha * mse + self.lagr_multiplier * cst
 
         # Compute gradients
         tr_vars = self.trainable_variables + [self.lagr_multiplier]
@@ -801,53 +664,25 @@ class CstRULRegressorWithLagrangian(CstRULRegressor):
                 'cst': self.cst_tracker.result()}
         
         
-class CstRULRegressorWithLagrangians(CstRULRegressor):
-    def __init__(self, input_shape, maxrul, hidden=[], alpha=0, beta=0):
-        super(CstRULRegressorWithLagrangians, self).__init__(input_shape, alpha, beta, maxrul, hidden)
+    def test_step(self, data):
+        
+        x_val, info_val = data
+        y_true_val = info_val[:, 0:1]
+        flags_val = info_val[:, 1:2]
+        idx_val = info_val[:, 2:3]
 
-        # Initialize Lagrange multiplier for the constraint term
-        self.lagr_multiplier_mse = tf.Variable(1.0, trainable=True, name="lagr_multiplier_mse")
-        self.lagr_multiplier_cst = tf.Variable(1.0, trainable=True, name="lagr_multiplier_cst")
+        y_pred_val = self(x_val, training=False)
+        mse_val = k.mean(flags_val * k.square(y_pred_val- y_true_val))
+        delta_pred_val = y_pred_val[1:] - y_pred_val[:-1]
+        delta_rul_val = -(idx_val[1:] - idx_val[:-1]) / self.maxrul
+        deltadiff_val = delta_pred_val - delta_rul_val
+        cst_val = k.mean(k.square(deltadiff_val))
+        val_loss = self.alpha * mse_val + self.lagr_multiplier * cst_val
 
-    def train_step(self, data):
-        x, info = data
-        y_true = info[:, 0:1]
-        flags = info[:, 1:2]
-        idx = info[:, 2:3]
+        self.val_ls_tracker.update_state(val_loss)
+        self.val_mse_tracker.update_state(mse_val)
+        self.val_cst_tracker.update_state(cst_val)
 
-        with tf.GradientTape() as tape:
-            # Obtain the predictions
-            y_pred = self(x, training=True)
-
-            # Compute the main loss
-            mse = k.mean(flags * k.square(y_pred - y_true))
-
-            # Compute the constraint regularization term
-            delta_pred = y_pred[1:] - y_pred[:-1]
-            delta_rul = -(idx[1:] - idx[:-1]) / self.maxrul
-            deltadiff = delta_pred - delta_rul
-            cst = k.mean(k.square(deltadiff))
-
-            # Lagrangian objective: alpha * mse + beta * cst + lagr_multiplier * cst -> in this case, the lagrangian multiplier is the weight of the constraint term
-            lagrangian_obj = self.lagr_multiplier_mse * mse + self.lagr_multiplier_cst * cst
-
-        # Compute gradients
-        tr_vars = self.trainable_variables + [self.lagr_multiplier_mse, self.lagr_multiplier_cst]
-        grads = tape.gradient(lagrangian_obj, tr_vars)
-
-        # Update the network weights and Lagrange multiplier
-        self.optimizer.apply_gradients(zip(grads, tr_vars))
-
-        # Update the Lagrange multipliers
-        self.lagr_multiplier_mse.assign(tf.maximum(0.0, self.lagr_multiplier_mse))
-        self.lagr_multiplier_cst.assign(tf.maximum(0.0, self.lagr_multiplier_cst))
-
-        # Track the loss change
-        self.ls_tracker.update_state(lagrangian_obj)
-        self.mse_tracker.update_state(mse)
-        self.cst_tracker.update_state(cst)
-
-        return {'loss': self.ls_tracker.result(),
-                'mse': self.mse_tracker.result(),
-                'cst': self.cst_tracker.result()}
-
+        return {'loss': self.val_ls_tracker.result(),
+                'mse': self.val_mse_tracker.result(),
+                'cst': self.val_cst_tracker.result()}
