@@ -258,8 +258,8 @@ def standardize(tr, vs, ts, dt_in):
     trstd = tr[dt_in].std().replace(to_replace=0, value=1) # handle static fields
 
     tr_s = tr.copy()
-    tr_s[dt_in] = (tr_s[dt_in] - trmean) / trstd #standardize train set 
     trmaxrul = tr_s['rul'].max()
+    tr_s[dt_in] = (tr_s[dt_in] - trmean) / trstd #standardize train set 
     tr_s['rul'] = tr_s['rul'] / trmaxrul
     
     vs_s = vs.copy()
@@ -321,6 +321,32 @@ def plot_results(mse_seeds, mse_mean, mse_std):
     plt.ylabel('MSE')
     plt.xlabel('Seed')
     plt.title('MSE distribution')
+    plt.show()
+    
+def plot_losses(history, epochs):
+    figsize=(14, 5)
+    plt.figure(figsize=figsize)
+    plt.plot(history[:epochs]['loss'], color='blue') # seleziona primo seed
+    plt.plot(history[:epochs]['val_loss'], color='green')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.xticks(range(0, epochs))
+    plt.legend(['Train loss', 'Validation loss'])
+    plt.show()
+    
+def plot_losses_mixed(history, epochs):
+    figsize=(14, 5)
+    plt.figure(figsize=figsize)
+    plt.plot(history[:epochs]['loss'], color='blue') # seleziona primo seed
+    plt.plot(history[:epochs]['val_loss'], color='green')
+    plt.plot(history[:epochs]['mse'], color='red') # seleziona primo seed
+    plt.plot(history[:epochs]['val_mse'], color='orange')
+    plt.plot(history[:epochs]['cst'], color='purple') # seleziona primo seed
+    plt.plot(history[:epochs]['val_cst'], color='brown') 
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.xticks(range(0, epochs))
+    plt.legend(['Train loss', 'Validation loss', 'Train MSE', 'Validation MSE', 'Train CST', 'Validation CST'])
     plt.show()
     
 # Function to save predictions to an Excel file
