@@ -263,7 +263,7 @@ def standardize(tr, vs, ts, dt_in):
     tr_s['rul'] = tr_s['rul'] / trmaxrul
     
     vs_s = vs.copy()
-    vs_s[dt_in] = (vs_s[dt_in] - trmean) / trstd #standardize test set 
+    vs_s[dt_in] = (vs_s[dt_in] - trmean) / trstd #standardize val set 
     vs_s['rul'] = vs_s['rul'] / trmaxrul
     
     ts_s = ts.copy()
@@ -272,25 +272,34 @@ def standardize(tr, vs, ts, dt_in):
     
     return tr_s, vs_s, ts_s, trmaxrul
 
-def standardize_mixed(tr, trs, tru, ts, dt_in):
+def standardize_mixed(tr, trs, tru, vs, ts, dt_in):
     trmean = tr[dt_in].mean() #NB dt_in selects columns with sensors data
     trstd = tr[dt_in].std().replace(to_replace=0, value=1) # handle static fields
     trmaxrul = tr['rul'].max()
 
-    ts_s = ts.copy()
-    ts_s[dt_in] = (ts_s[dt_in] - trmean) / trstd
-    #tr[dt_in] = (tr[dt_in] - trmean) / trstd
-    trs_s = trs.copy()
-    trs_s[dt_in] = (trs_s[dt_in] - trmean) / trstd
-    tru_s = tru.copy()
-    tru_s[dt_in] = (tru_s[dt_in] - trmean) / trstd
+    # tr_s = tr.copy()
+    # tr_s[dt_in] = (tr_s[dt_in] - trmean) / trstd #standardize train set 
+    # trmaxrul = tr_s['rul'].max()
+    # tr_s['rul'] = tr_s['rul'] / trmaxrul
     
-    ts_s['rul'] = ts_s['rul'] / trmaxrul 
-    #tr['rul'] = tr['rul'] / trmaxrul 
+    tru_s = tru.copy()
+    tru_s[dt_in] = (tru_s[dt_in] - trmean) / trstd #standardize unsupervised set
+    tru_s['rul'] = tru_s['rul'] / trmaxrul #we assign invalid rul values to unsupervised data
+
+    trs_s = trs.copy()
+    trs_s[dt_in] = (trs_s[dt_in] - trmean) / trstd #standardize supervised set
     trs_s['rul'] = trs_s['rul'] / trmaxrul
-    tru_s['rul'] = tru_s['rul'] / trmaxrul
-        
-    return trs_s, tru_s, ts_s, trmaxrul
+
+    vs_s = vs.copy()
+    vs_s[dt_in] = (vs_s[dt_in] - trmean) / trstd #standardize val set 
+    vs_s['rul'] = vs_s['rul'] / trmaxrul
+    
+    ts_s = ts.copy()
+    ts_s[dt_in] = (ts_s[dt_in] - trmean) / trstd #standardize test set 
+    ts_s['rul'] = ts_s['rul'] / trmaxrul
+    
+    
+    return trs_s, tru_s,  vs_s, ts_s, trmaxrul
     
 
 def evaluation(pred, ts_s):
