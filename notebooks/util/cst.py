@@ -755,7 +755,12 @@ class CstPosRULRegressorWithLagrangian(CstRULRegressor):
 
         # Initialize Lagrange multiplier for the constraint term
         self.lagr_multiplier = tf.Variable(1.0, trainable=True, name="lagr_multiplier")
-        self.gamma = gamma 
+        if gamma == -1:
+            self.gamma = tf.Variable(1.0, trainable=True, name="lagr_multiplier_gamma")
+            self.static = False
+        else:
+            self.gamma = gamma
+            self.static = True
 
     def train_step(self, data):
         x, info = data
@@ -791,6 +796,10 @@ class CstPosRULRegressorWithLagrangian(CstRULRegressor):
 
         # Update the Lagrange multiplier
         self.lagr_multiplier.assign(tf.maximum(0.0, self.lagr_multiplier))
+        
+        # Update the Lagrange multiplier
+        if not self.static:
+            self.gamma.assign(tf.maximum(0.0, self.gamma))
 
         # Track the loss change
         self.ls_tracker.update_state(lagrangian_obj)
@@ -815,7 +824,10 @@ class CstPosRULRegressorWithLagrangian(CstRULRegressor):
         delta_rul_val = -(idx_val[1:] - idx_val[:-1]) / self.maxrul
         deltadiff_val = delta_pred_val - delta_rul_val
         cst_val = k.mean(k.square(deltadiff_val))
-        val_loss = self.alpha * mse_val + self.lagr_multiplier * cst_val
+        
+        positivity_regularizer = k.mean(self.gamma * k.square(k.maximum(0.0, - y_pred_val)))
+        
+        val_loss = self.alpha * mse_val + self.lagr_multiplier * cst_val + positivity_regularizer
 
         self.val_ls_tracker.update_state(val_loss)
         self.val_mse_tracker.update_state(mse_val)
