@@ -11,6 +11,6 @@ To get reliable results, we will test these approaches on 30 different seeds and
 
 **Local execution of the project**
 This project makes use of Docker: in order to run it locally, you need to have Docker and Docker Compose installed. After cloning the respository, start the container via Docker Compose, from the main directory of the project:
-'''
+```
   docker-compose up
-'''
+```
