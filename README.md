@@ -1,10 +1,15 @@
 # AI-in-Industry
+Project for AI in Industry course: Improve usage of unsupervised data for definition of RUL-based maintenance policies. 
 
-- **Task 1**: considerare solo dati supervisionati. Cosa succede se aumentano o diminuiscono? Prova le percentuali: 100% 75% 50%.
-- **Task 2**: considerare solo dati non supervisionati. Cosa succede se aumentano o diminuiscono? Prova le percentuali: 100% 75% 50%.
-- **Task 3**: considerare sia dati supervisionati sia non supervisionati. Considera tutti i dati unsupervised e diminiusci (1/2, 1/4) i dati supervisionati.
-- **Task 4**: aggiungere un'altra loss (regolarizzatore) dove RUL > 0. (hp: dovrebbe migliorare)
-- **Task 5**: Lagrangian: no peso fisso alle due loss, va imparato e massimizzato.
+**We will run multiple experiments on our data to analyse the effect of domain knowledge injection via multiple approaches.**
 
-Per tutte le task fare ipotesi prima di eseguire e ottenere risultati. Confrontare i risultati ottenuti e vedere se sono in linea con le ipotesi.
-Fare con una trentina di seed diversi e calcolare media e deviazione standard: fai istogramma per visualizzarli.
+- In the first 3 tasks we will experiment with different ratios and combinations of supervised and unsupervised data.
+- In task 4 we will use a static regularizer to inject domain knowledge (RUL>0). 
+- In task 5 we will use a lagrangian approach to dynamically maximize the weight of the regularizer.
+
+To get reliable results, we will test these approaches on 30 different seeds and we will compute the mean value for the loss and its stanard deviation.
+
+**Local execution of the project**
+This project makes use of Docker: in order to run it locally, you need to have Docker and Docker Compose installed. After cloning the respository, start the container via Docker Compose, from the main directory of the project:
+
+  docker-compose up
