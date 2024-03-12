@@ -218,8 +218,8 @@ def split_machines(data, supervised, unsupervised, val = 0.2):
     machines = data.machine.unique()
     np.random.shuffle(machines)
 
-    sep_trs = int(supervised * len(machines))
-    sep_tru = int(unsupervised * len(machines))
+    sep_trs = int(supervised * len(machines)) #0.5
+    sep_tru = int(unsupervised * len(machines)) #0.75
     
     if unsupervised == 0:
         sep_val = int(val * sep_trs)
@@ -246,7 +246,6 @@ def split_machines(data, supervised, unsupervised, val = 0.2):
         tru_mcn = list(machines[sep_val_u:sep_tru]) #prende machines con dati non supervisionati
         ts_mcn = list(machines[sep_tru:]) #restanti per test (25% del totale)
         tv_mcn = tvs_mcn + tvu_mcn
-        print(f'Num. machines: {len(trs_mcn)} (supervised), {len(tru_mcn)} (unsupervised), {len(tv_mcn)} (validation), {len(ts_mcn)} (test)')
         tr, ts, val = partition_by_machine(data, trs_mcn + tru_mcn, tv_mcn)
         trs, tru = partition_by_machine_mixed(tr, trs_mcn)
         return tr, ts, trs, tru, val
